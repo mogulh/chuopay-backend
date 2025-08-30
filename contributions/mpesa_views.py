@@ -10,7 +10,7 @@ from rest_framework.response import Response
 from rest_framework import status
 from django.core.exceptions import ValidationError
 from .mpesa_service import MPESAService
-from .models import StudentContribution, PaymentHistory
+from .models import StudentContribution
 from .serializers import StudentContributionSerializer
 
 logger = logging.getLogger(__name__)

@@ -35,6 +35,7 @@ INSTALLED_APPS = [
     # Local apps
     'accounts',
     'contributions',
+    'approvals',
     'notifications',
     'leads',
 ]

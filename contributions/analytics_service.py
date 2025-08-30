@@ -5,7 +5,7 @@ from django.db.models import Sum, Count, Avg, Q, F
 from django.utils import timezone
 from django.db.models.functions import TruncDate, TruncWeek, TruncMonth
 from .models import (
-    StudentContribution, PaymentHistory, ContributionEvent, 
+    StudentContribution, ContributionEvent, 
     Student, Group, School
 )
 
