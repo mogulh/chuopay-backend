@@ -13,6 +13,8 @@ router.register(r'contribution-events', views.ContributionEventViewSet)
 router.register(r'contribution-tiers', views.ContributionTierViewSet)
 router.register(r'student-contributions', views.StudentContributionViewSet)
 router.register(r'payment-reminders', views.PaymentReminderViewSet)
+router.register(r'parent-dashboard', views.ParentDashboardViewSet, basename='parent-dashboard')
+router.register(r'admin-dashboard', views.AdminDashboardViewSet, basename='admin-dashboard')
 
 app_name = 'contributions'
 

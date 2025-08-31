@@ -17,6 +17,439 @@ from .serializers import (
 )
 
 
+class AdminDashboardViewSet(viewsets.ViewSet):
+    """
+    Admin dashboard API endpoints for section-specific views
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get_permissions(self):
+        return [permissions.IsAuthenticated()]
+    
+    @action(detail=False, methods=['get'])
+    def my_sections(self, request):
+        """Get all sections for the authenticated admin"""
+        user = request.user
+        if user.role != 'admin':
+            return Response({'error': 'Access denied. Admin role required.'}, status=status.HTTP_403_FORBIDDEN)
+        
+        # Admin can see all sections in their school
+        sections = SchoolSection.objects.filter(school=user.school).select_related('school', 'section_head')
+        serializer = SchoolSectionSerializer(sections, many=True)
+        return Response(serializer.data)
+    
+    @action(detail=False, methods=['get'])
+    def section_dashboard(self, request):
+        """Get dashboard data for a specific section"""
+        user = request.user
+        if user.role != 'admin':
+            return Response({'error': 'Access denied. Admin role required.'}, status=status.HTTP_403_FORBIDDEN)
+        
+        section_id = request.query_params.get('section_id')
+        if not section_id:
+            return Response({'error': 'section_id parameter is required'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            section = SchoolSection.objects.get(
+                id=section_id,
+                school=user.school
+            )
+        except SchoolSection.DoesNotExist:
+            return Response({'error': 'Section not found or access denied'}, status=status.HTTP_404_NOT_FOUND)
+        
+        # Get section's groups
+        groups = section.groups.all()
+        
+        # Get section's students
+        students = section.students.all()
+        
+        # Get section's events
+        events = ContributionEvent.objects.filter(section=section)
+        
+        # Get section's contributions
+        contributions = StudentContribution.objects.filter(
+            student__section=section
+        ).select_related('event', 'student', 'parent')
+        
+        # Calculate statistics
+        total_students = students.count()
+        active_students = students.filter(is_active=True).count()
+        total_groups = groups.count()
+        total_events = events.count()
+        active_events = events.filter(is_active=True, is_published=True).count()
+        
+        total_contributions = contributions.count()
+        paid_contributions = contributions.filter(payment_status='paid').count()
+        pending_contributions = contributions.filter(payment_status='pending').count()
+        total_amount_paid = contributions.aggregate(
+            total=Sum('amount_paid')
+        )['total'] or 0
+        total_amount_required = contributions.aggregate(
+            total=Sum('amount_required')
+        )['total'] or 0
+        
+        # Get recent events
+        recent_events = events.order_by('-created_at')[:5]
+        
+        # Get recent contributions
+        recent_contributions = contributions.order_by('-created_at')[:5]
+        
+        # Get top performing groups
+        top_groups = groups.annotate(
+            student_count=Count('students'),
+            contribution_count=Count('students__contributions')
+        ).order_by('-student_count')[:3]
+        
+        dashboard_data = {
+            'section': SchoolSectionSerializer(section).data,
+            'statistics': {
+                'total_students': total_students,
+                'active_students': active_students,
+                'inactive_students': total_students - active_students,
+                'total_groups': total_groups,
+                'total_events': total_events,
+                'active_events': active_events,
+                'total_contributions': total_contributions,
+                'paid_contributions': paid_contributions,
+                'pending_contributions': pending_contributions,
+                'total_amount_paid': float(total_amount_paid),
+                'total_amount_required': float(total_amount_required),
+                'payment_percentage': (paid_contributions / total_contributions * 100) if total_contributions > 0 else 0,
+                'collection_rate': (total_amount_paid / total_amount_required * 100) if total_amount_required > 0 else 0
+            },
+            'recent_events': ContributionEventSerializer(recent_events, many=True).data,
+            'recent_contributions': StudentContributionSerializer(recent_contributions, many=True).data,
+            'top_groups': GroupSerializer(top_groups, many=True).data
+        }
+        
+        return Response(dashboard_data)
+    
+    @action(detail=False, methods=['get'])
+    def section_students(self, request):
+        """Get all students for a specific section"""
+        user = request.user
+        if user.role != 'admin':
+            return Response({'error': 'Access denied. Admin role required.'}, status=status.HTTP_403_FORBIDDEN)
+        
+        section_id = request.query_params.get('section_id')
+        if not section_id:
+            return Response({'error': 'section_id parameter is required'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            section = SchoolSection.objects.get(
+                id=section_id,
+                school=user.school
+            )
+        except SchoolSection.DoesNotExist:
+            return Response({'error': 'Section not found or access denied'}, status=status.HTTP_404_NOT_FOUND)
+        
+        # Get section's students
+        students = section.students.all().select_related('school', 'section').prefetch_related('groups', 'parents')
+        
+        serializer = StudentSerializer(students, many=True)
+        return Response(serializer.data)
+    
+    @action(detail=False, methods=['get'])
+    def section_groups(self, request):
+        """Get all groups for a specific section"""
+        user = request.user
+        if user.role != 'admin':
+            return Response({'error': 'Access denied. Admin role required.'}, status=status.HTTP_403_FORBIDDEN)
+        
+        section_id = request.query_params.get('section_id')
+        if not section_id:
+            return Response({'error': 'section_id parameter is required'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            section = SchoolSection.objects.get(
+                id=section_id,
+                school=user.school
+            )
+        except SchoolSection.DoesNotExist:
+            return Response({'error': 'Section not found or access denied'}, status=status.HTTP_404_NOT_FOUND)
+        
+        # Get section's groups
+        groups = section.groups.all().select_related('teacher', 'section')
+        
+        serializer = GroupSerializer(groups, many=True)
+        return Response(serializer.data)
+    
+    @action(detail=False, methods=['get'])
+    def section_events(self, request):
+        """Get all events for a specific section"""
+        user = request.user
+        if user.role != 'admin':
+            return Response({'error': 'Access denied. Admin role required.'}, status=status.HTTP_403_FORBIDDEN)
+        
+        section_id = request.query_params.get('section_id')
+        if not section_id:
+            return Response({'error': 'section_id parameter is required'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            section = SchoolSection.objects.get(
+                id=section_id,
+                school=user.school
+            )
+        except SchoolSection.DoesNotExist:
+            return Response({'error': 'Section not found or access denied'}, status=status.HTTP_404_NOT_FOUND)
+        
+        # Get section's events
+        events = ContributionEvent.objects.filter(
+            section=section
+        ).select_related('school', 'section', 'created_by').prefetch_related('groups').order_by('-created_at')
+        
+        serializer = ContributionEventSerializer(events, many=True)
+        return Response(serializer.data)
+    
+    @action(detail=False, methods=['get'])
+    def section_contributions(self, request):
+        """Get all contributions for a specific section"""
+        user = request.user
+        if user.role != 'admin':
+            return Response({'error': 'Access denied. Admin role required.'}, status=status.HTTP_403_FORBIDDEN)
+        
+        section_id = request.query_params.get('section_id')
+        if not section_id:
+            return Response({'error': 'section_id parameter is required'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            section = SchoolSection.objects.get(
+                id=section_id,
+                school=user.school
+            )
+        except SchoolSection.DoesNotExist:
+            return Response({'error': 'Section not found or access denied'}, status=status.HTTP_404_NOT_FOUND)
+        
+        # Get section's contributions
+        contributions = StudentContribution.objects.filter(
+            student__section=section
+        ).select_related('event', 'student', 'parent', 'selected_tier').order_by('-created_at')
+        
+        serializer = StudentContributionSerializer(contributions, many=True)
+        return Response(serializer.data)
+    
+    @action(detail=False, methods=['get'])
+    def section_analytics(self, request):
+        """Get analytics data for a specific section"""
+        user = request.user
+        if user.role != 'admin':
+            return Response({'error': 'Access denied. Admin role required.'}, status=status.HTTP_403_FORBIDDEN)
+        
+        section_id = request.query_params.get('section_id')
+        if not section_id:
+            return Response({'error': 'section_id parameter is required'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            section = SchoolSection.objects.get(
+                id=section_id,
+                school=user.school
+            )
+        except SchoolSection.DoesNotExist:
+            return Response({'error': 'Section not found or access denied'}, status=status.HTTP_404_NOT_FOUND)
+        
+        # Get contributions for the section
+        contributions = StudentContribution.objects.filter(student__section=section)
+        
+        # Monthly contribution trends
+        from django.db.models.functions import TruncMonth
+        monthly_trends = contributions.annotate(
+            month=TruncMonth('created_at')
+        ).values('month').annotate(
+            total_amount=Sum('amount_paid'),
+            count=Count('id')
+        ).order_by('month')
+        
+        # Payment method breakdown
+        payment_methods = contributions.values('payment_method').annotate(
+            count=Count('id'),
+            total_amount=Sum('amount_paid')
+        ).order_by('-total_amount')
+        
+        # Event performance
+        event_performance = ContributionEvent.objects.filter(section=section).annotate(
+            total_contributions=Count('student_contributions'),
+            paid_contributions=Count('student_contributions', filter=Q(student_contributions__payment_status='paid')),
+            total_amount=Sum('student_contributions__amount_paid')
+        ).order_by('-total_amount')
+        
+        analytics_data = {
+            'section': SchoolSectionSerializer(section).data,
+            'monthly_trends': list(monthly_trends),
+            'payment_methods': list(payment_methods),
+            'event_performance': ContributionEventSerializer(event_performance, many=True).data
+        }
+        
+        return Response(analytics_data)
+
+
+class ParentDashboardViewSet(viewsets.ViewSet):
+    """
+    Parent dashboard API endpoints for child-specific views
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get_permissions(self):
+        return [permissions.IsAuthenticated()]
+    
+    @action(detail=False, methods=['get'])
+    def my_children(self, request):
+        """Get all children for the authenticated parent"""
+        user = request.user
+        if user.role != 'parent':
+            return Response({'error': 'Access denied. Parent role required.'}, status=status.HTTP_403_FORBIDDEN)
+        
+        children = Student.objects.filter(studentparent__parent=user).select_related('school', 'section')
+        serializer = StudentSerializer(children, many=True)
+        return Response(serializer.data)
+    
+    @action(detail=False, methods=['get'])
+    def child_dashboard(self, request):
+        """Get dashboard data for a specific child"""
+        user = request.user
+        if user.role != 'parent':
+            return Response({'error': 'Access denied. Parent role required.'}, status=status.HTTP_403_FORBIDDEN)
+        
+        child_id = request.query_params.get('child_id')
+        if not child_id:
+            return Response({'error': 'child_id parameter is required'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            child = Student.objects.get(
+                id=child_id,
+                studentparent__parent=user
+            )
+        except Student.DoesNotExist:
+            return Response({'error': 'Child not found or access denied'}, status=status.HTTP_404_NOT_FOUND)
+        
+        # Get child's groups
+        groups = child.groups.all()
+        
+        # Get events for child's groups
+        events = ContributionEvent.objects.filter(
+            groups__in=groups
+        ).distinct()
+        
+        # Get child's contributions
+        contributions = StudentContribution.objects.filter(
+            student=child,
+            parent=user
+        ).select_related('event', 'selected_tier')
+        
+        # Calculate statistics
+        total_contributions = contributions.count()
+        paid_contributions = contributions.filter(payment_status='paid').count()
+        pending_contributions = contributions.filter(payment_status='pending').count()
+        total_amount_paid = contributions.aggregate(
+            total=Sum('amount_paid')
+        )['total'] or 0
+        
+        # Get upcoming events
+        upcoming_events = events.filter(
+            due_date__gte=timezone.now(),
+            is_active=True,
+            is_published=True
+        ).order_by('due_date')[:5]
+        
+        # Get recent contributions
+        recent_contributions = contributions.order_by('-created_at')[:5]
+        
+        dashboard_data = {
+            'child': StudentSerializer(child).data,
+            'groups': GroupSerializer(groups, many=True).data,
+            'statistics': {
+                'total_contributions': total_contributions,
+                'paid_contributions': paid_contributions,
+                'pending_contributions': pending_contributions,
+                'total_amount_paid': float(total_amount_paid),
+                'payment_percentage': (paid_contributions / total_contributions * 100) if total_contributions > 0 else 0
+            },
+            'upcoming_events': ContributionEventSerializer(upcoming_events, many=True).data,
+            'recent_contributions': StudentContributionSerializer(recent_contributions, many=True).data
+        }
+        
+        return Response(dashboard_data)
+    
+    @action(detail=False, methods=['get'])
+    def child_events(self, request):
+        """Get all events for a specific child"""
+        user = request.user
+        if user.role != 'parent':
+            return Response({'error': 'Access denied. Parent role required.'}, status=status.HTTP_403_FORBIDDEN)
+        
+        child_id = request.query_params.get('child_id')
+        if not child_id:
+            return Response({'error': 'child_id parameter is required'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            child = Student.objects.get(
+                id=child_id,
+                studentparent__parent=user
+            )
+        except Student.DoesNotExist:
+            return Response({'error': 'Child not found or access denied'}, status=status.HTTP_404_NOT_FOUND)
+        
+        # Get events for child's groups
+        events = ContributionEvent.objects.filter(
+            groups__in=child.groups.all()
+        ).distinct().order_by('-created_at')
+        
+        serializer = ContributionEventSerializer(events, many=True)
+        return Response(serializer.data)
+    
+    @action(detail=False, methods=['get'])
+    def child_contributions(self, request):
+        """Get all contributions for a specific child"""
+        user = request.user
+        if user.role != 'parent':
+            return Response({'error': 'Access denied. Parent role required.'}, status=status.HTTP_403_FORBIDDEN)
+        
+        child_id = request.query_params.get('child_id')
+        if not child_id:
+            return Response({'error': 'child_id parameter is required'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            child = Student.objects.get(
+                id=child_id,
+                studentparent__parent=user
+            )
+        except Student.DoesNotExist:
+            return Response({'error': 'Child not found or access denied'}, status=status.HTTP_404_NOT_FOUND)
+        
+        # Get child's contributions
+        contributions = StudentContribution.objects.filter(
+            student=child,
+            parent=user
+        ).select_related('event', 'selected_tier').order_by('-created_at')
+        
+        serializer = StudentContributionSerializer(contributions, many=True)
+        return Response(serializer.data)
+    
+    @action(detail=False, methods=['get'])
+    def child_groups(self, request):
+        """Get all groups for a specific child"""
+        user = request.user
+        if user.role != 'parent':
+            return Response({'error': 'Access denied. Parent role required.'}, status=status.HTTP_403_FORBIDDEN)
+        
+        child_id = request.query_params.get('child_id')
+        if not child_id:
+            return Response({'error': 'child_id parameter is required'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            child = Student.objects.get(
+                id=child_id,
+                studentparent__parent=user
+            )
+        except Student.DoesNotExist:
+            return Response({'error': 'Child not found or access denied'}, status=status.HTTP_404_NOT_FOUND)
+        
+        # Get child's groups
+        groups = child.groups.all()
+        
+        serializer = GroupSerializer(groups, many=True)
+        return Response(serializer.data)
+
+
 class SchoolViewSet(viewsets.ModelViewSet):
     """
     API endpoint for managing schools
@@ -58,7 +491,7 @@ class SchoolSectionViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(section_head=user)
         # Parents can only see sections their children belong to
         elif user.role == 'parent':
-            queryset = queryset.filter(students__parents=user).distinct()
+            queryset = queryset.filter(students__studentparent__parent=user).distinct()
         
         return queryset
 
@@ -92,7 +525,7 @@ class GroupViewSet(viewsets.ModelViewSet):
             )
         # Parents can only see groups their children belong to
         elif user.role == 'parent':
-            queryset = queryset.filter(students__parents=user).distinct()
+            queryset = queryset.filter(studentgroup__student__studentparent__parent=user).distinct()
         
         return queryset
 
@@ -182,7 +615,7 @@ class StudentViewSet(viewsets.ModelViewSet):
             ).distinct()
         # Parents can only see their own children
         elif user.role == 'parent':
-            queryset = queryset.filter(parents=user)
+            queryset = queryset.filter(studentparent__parent=user)
         
         return queryset
 
@@ -233,7 +666,7 @@ class ContributionEventViewSet(viewsets.ModelViewSet):
         # Parents can only see events for their children's sections
         elif user.role == 'parent':
             queryset = queryset.filter(
-                groups__students__parents=user
+                groups__studentgroup__student__studentparent__parent=user
             ).distinct()
         
         return queryset
@@ -300,7 +733,7 @@ class ContributionTierViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(event__groups__teacher=user).distinct()
         # Parents can only see tiers for events in their children's groups
         elif user.role == 'parent':
-            queryset = queryset.filter(event__groups__students__parents=user).distinct()
+            queryset = queryset.filter(event__groups__studentgroup__student__studentparent__parent=user).distinct()
         
         return queryset
 
