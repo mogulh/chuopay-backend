@@ -36,6 +36,62 @@ class School(models.Model):
         return self.name
 
 
+class SchoolSection(models.Model):
+    """
+    School sections for data isolation (Primary, Secondary, Nursery)
+    """
+    SECTION_CHOICES = [
+        ('nursery', 'Nursery'),
+        ('primary', 'Primary'),
+        ('secondary', 'Secondary'),
+        ('junior_secondary', 'Junior Secondary'),
+        ('senior_secondary', 'Senior Secondary'),
+    ]
+    
+    school = models.ForeignKey(School, on_delete=models.CASCADE, related_name='sections')
+    name = models.CharField(max_length=50, choices=SECTION_CHOICES)
+    display_name = models.CharField(max_length=100, help_text="Custom display name (e.g., 'Primary School')")
+    description = models.TextField(blank=True)
+    
+    # Section-specific settings
+    currency = models.CharField(max_length=3, blank=True, help_text="Override school currency if different")
+    timezone = models.CharField(max_length=50, blank=True, help_text="Override school timezone if different")
+    
+    # Section management
+    is_active = models.BooleanField(default=True)
+    section_head = models.ForeignKey(
+        User, 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True, 
+        related_name='managed_sections',
+        limit_choices_to={'role__in': ['admin', 'teacher']}
+    )
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        db_table = 'school_sections'
+        verbose_name = 'School Section'
+        verbose_name_plural = 'School Sections'
+        unique_together = ['school', 'name']
+        ordering = ['school', 'name']
+    
+    def __str__(self):
+        return f"{self.school.name} - {self.display_name}"
+    
+    @property
+    def effective_currency(self):
+        """Get section currency or fall back to school currency"""
+        return self.currency or self.school.currency
+    
+    @property
+    def effective_timezone(self):
+        """Get section timezone or fall back to school timezone"""
+        return self.timezone or self.school.timezone
+
+
 class Group(models.Model):
     """
     Group model for organizing students (classes, clubs, etc.)
@@ -52,8 +108,9 @@ class Group(models.Model):
     description = models.TextField(blank=True)
     group_type = models.CharField(max_length=20, choices=GROUP_TYPE_CHOICES, default='class')
     
-    # School relationship
+    # School and section relationships
     school = models.ForeignKey(School, on_delete=models.CASCADE, related_name='groups')
+    section = models.ForeignKey(SchoolSection, on_delete=models.CASCADE, related_name='groups', null=True, blank=True)
     
     # Teacher assignment (optional)
     teacher = models.ForeignKey(
@@ -76,10 +133,10 @@ class Group(models.Model):
         db_table = 'groups'
         verbose_name = 'Group'
         verbose_name_plural = 'Groups'
-        unique_together = ['name', 'school']
+        unique_together = ['name', 'section']
     
     def __str__(self):
-        return f"{self.name} - {self.school.name}"
+        return f"{self.name} - {self.section.display_name if self.section else self.school.name}"
     
     @property
     def student_count(self):
@@ -107,6 +164,7 @@ class Student(models.Model):
     parents = models.ManyToManyField(User, related_name='children', limit_choices_to={'role': 'parent'})
     groups = models.ManyToManyField(Group, related_name='students')
     school = models.ForeignKey(School, on_delete=models.CASCADE, related_name='students')
+    section = models.ForeignKey(SchoolSection, on_delete=models.CASCADE, related_name='students', null=True, blank=True)
     
     # Contact information
     phone_number = models.CharField(max_length=13, blank=True)
@@ -144,6 +202,73 @@ class Student(models.Model):
         return today.year - self.date_of_birth.year - ((today.month, today.day) < (self.date_of_birth.month, self.date_of_birth.day))
 
 
+class StudentGroup(models.Model):
+    """
+    Through model for Student-Group relationship with additional fields
+    """
+    student = models.ForeignKey(Student, on_delete=models.CASCADE)
+    group = models.ForeignKey(Group, on_delete=models.CASCADE)
+    
+    # Relationship details
+    joined_date = models.DateField(auto_now_add=True)
+    is_active = models.BooleanField(default=True)
+    
+    # Academic information
+    academic_year = models.CharField(max_length=9, help_text="Format: 2023-2024")
+    term = models.CharField(max_length=20, blank=True)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        db_table = 'student_groups'
+        verbose_name = 'Student Group'
+        verbose_name_plural = 'Student Groups'
+        unique_together = ['student', 'group', 'academic_year']
+    
+    def __str__(self):
+        return f"{self.student.full_name} - {self.group.name}"
+
+
+class StudentParent(models.Model):
+    """
+    Through model for Student-Parent relationship with additional fields
+    """
+    RELATIONSHIP_CHOICES = [
+        ('father', 'Father'),
+        ('mother', 'Mother'),
+        ('guardian', 'Guardian'),
+        ('grandparent', 'Grandparent'),
+        ('sibling', 'Sibling'),
+        ('other', 'Other'),
+    ]
+    
+    student = models.ForeignKey(Student, on_delete=models.CASCADE)
+    parent = models.ForeignKey(User, on_delete=models.CASCADE)
+    
+    # Relationship details
+    relationship = models.CharField(max_length=20, choices=RELATIONSHIP_CHOICES)
+    is_primary_contact = models.BooleanField(default=False)
+    is_emergency_contact = models.BooleanField(default=False)
+    
+    # Contact preferences
+    receives_notifications = models.BooleanField(default=True)
+    receives_sms = models.BooleanField(default=True)
+    receives_email = models.BooleanField(default=False)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        db_table = 'student_parents'
+        verbose_name = 'Student Parent'
+        verbose_name_plural = 'Student Parents'
+        unique_together = ['student', 'parent']
+    
+    def __str__(self):
+        return f"{self.parent.full_name} - {self.student.full_name} ({self.relationship})"
+
+
 class ContributionEvent(models.Model):
     """
     Contribution event model for managing payment requests
@@ -168,8 +293,9 @@ class ContributionEvent(models.Model):
     description = models.TextField()
     event_type = models.CharField(max_length=20, choices=EVENT_TYPE_CHOICES)
     
-    # School and group relationships
+    # School and section relationships
     school = models.ForeignKey(School, on_delete=models.CASCADE, related_name='contribution_events')
+    section = models.ForeignKey(SchoolSection, on_delete=models.CASCADE, related_name='contribution_events', null=True, blank=True)
     groups = models.ManyToManyField(Group, related_name='contribution_events')
     
     # Financial information
@@ -211,9 +337,16 @@ class ContributionEvent(models.Model):
         db_table = 'contribution_events'
         verbose_name = 'Contribution Event'
         verbose_name_plural = 'Contribution Events'
+        ordering = ['-created_at']
     
     def __str__(self):
-        return f"{self.name} - {self.school.name}"
+        section_name = self.section.display_name if self.section else self.school.name
+        return f"{self.name} - {section_name}"
+    
+    @property
+    def effective_currency(self):
+        """Get event currency or fall back to section currency"""
+        return self.currency or (self.section.effective_currency if self.section else self.school.currency)
     
     @property
     def is_overdue(self):

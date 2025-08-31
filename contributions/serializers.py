@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from .models import (
-    School, Group, Student,
+    School, SchoolSection, Group, Student,
     ContributionEvent, ContributionTier, StudentContribution, PaymentReminder
 )
 from accounts.models import User
@@ -10,10 +10,47 @@ class SchoolSerializer(serializers.ModelSerializer):
     """
     Serializer for School model
     """
+    sections_count = serializers.SerializerMethodField()
+    
     class Meta:
         model = School
-        fields = '__all__'
+        fields = [
+            'id', 'name', 'address', 'city', 'county', 'phone_number', 
+            'email', 'website', 'logo', 'currency', 'timezone', 
+            'created_at', 'updated_at', 'sections_count'
+        ]
         read_only_fields = ['created_at', 'updated_at']
+    
+    def get_sections_count(self, obj):
+        return obj.sections.count()
+
+
+class SchoolSectionSerializer(serializers.ModelSerializer):
+    """
+    Serializer for SchoolSection model
+    """
+    school_name = serializers.CharField(source='school.name', read_only=True)
+    section_head_name = serializers.CharField(source='section_head.full_name', read_only=True)
+    groups_count = serializers.SerializerMethodField()
+    students_count = serializers.SerializerMethodField()
+    effective_currency = serializers.CharField(read_only=True)
+    effective_timezone = serializers.CharField(read_only=True)
+    
+    class Meta:
+        model = SchoolSection
+        fields = [
+            'id', 'school', 'school_name', 'name', 'display_name', 'description',
+            'currency', 'timezone', 'effective_currency', 'effective_timezone',
+            'is_active', 'section_head', 'section_head_name',
+            'groups_count', 'students_count', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['created_at', 'updated_at']
+    
+    def get_groups_count(self, obj):
+        return obj.groups.count()
+    
+    def get_students_count(self, obj):
+        return obj.students.count()
 
 
 class GroupSerializer(serializers.ModelSerializer):
@@ -21,13 +58,18 @@ class GroupSerializer(serializers.ModelSerializer):
     Serializer for Group model
     """
     school_name = serializers.CharField(source='school.name', read_only=True)
+    section_name = serializers.CharField(source='section.display_name', read_only=True)
     teacher_name = serializers.CharField(source='teacher.full_name', read_only=True)
     student_count = serializers.IntegerField(read_only=True)
     
     class Meta:
         model = Group
-        fields = '__all__'
-        read_only_fields = ['created_at', 'updated_at', 'student_count']
+        fields = [
+            'id', 'name', 'description', 'group_type', 'school', 'school_name',
+            'section', 'section_name', 'teacher', 'teacher_name', 'is_active',
+            'max_students', 'student_count', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['created_at', 'updated_at']
 
 
 class StudentSerializer(serializers.ModelSerializer):
@@ -35,13 +77,24 @@ class StudentSerializer(serializers.ModelSerializer):
     Serializer for Student model
     """
     school_name = serializers.CharField(source='school.name', read_only=True)
+    section_name = serializers.CharField(source='section.display_name', read_only=True)
     full_name = serializers.CharField(read_only=True)
     age = serializers.IntegerField(read_only=True)
+    groups_count = serializers.SerializerMethodField()
     
     class Meta:
         model = Student
-        fields = '__all__'
-        read_only_fields = ['created_at', 'updated_at', 'full_name', 'age']
+        fields = [
+            'id', 'first_name', 'last_name', 'full_name', 'student_id', 
+            'date_of_birth', 'gender', 'age', 'school', 'school_name',
+            'section', 'section_name', 'phone_number', 'email', 'address',
+            'admission_date', 'current_class', 'is_active', 'is_enrolled',
+            'groups_count', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['created_at', 'updated_at']
+    
+    def get_groups_count(self, obj):
+        return obj.groups.count()
 
 
 class ContributionTierSerializer(serializers.ModelSerializer):

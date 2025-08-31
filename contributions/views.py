@@ -7,11 +7,11 @@ from django.db.models import Count, Q, Sum
 from django.utils import timezone
 from datetime import datetime, timedelta
 from .models import (
-    School, Group, Student,
+    School, SchoolSection, Group, Student,
     ContributionEvent, ContributionTier, StudentContribution, PaymentReminder
 )
 from .serializers import (
-    SchoolSerializer, GroupSerializer, StudentSerializer,
+    SchoolSerializer, SchoolSectionSerializer, GroupSerializer, StudentSerializer,
     ContributionEventSerializer, ContributionTierSerializer,
     StudentContributionSerializer, PaymentReminderSerializer
 )
@@ -36,27 +36,61 @@ class SchoolViewSet(viewsets.ModelViewSet):
         return [permissions.IsAdminUser()]
 
 
-class GroupViewSet(viewsets.ModelViewSet):
+class SchoolSectionViewSet(viewsets.ModelViewSet):
     """
-    API endpoint for managing groups (classes, clubs, etc.)
+    API endpoint for managing school sections
     """
-    queryset = Group.objects.select_related('school', 'teacher').prefetch_related('students')
-    serializer_class = GroupSerializer
+    queryset = SchoolSection.objects.select_related('school', 'section_head')
+    serializer_class = SchoolSectionSerializer
     permission_classes = [permissions.IsAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    filterset_fields = ['group_type', 'is_active', 'school', 'teacher']
-    search_fields = ['name', 'description', 'school__name']
-    ordering_fields = ['name', 'created_at', 'student_count']
+    filterset_fields = ['name', 'is_active', 'school']
+    search_fields = ['display_name', 'description', 'school__name']
+    ordering_fields = ['name', 'display_name', 'created_at']
     ordering = ['school__name', 'name']
 
     def get_queryset(self):
         queryset = super().get_queryset()
         user = self.request.user
         
-        # Teachers can only see groups they're assigned to
+        # Teachers can only see sections they manage
         if user.role == 'teacher':
-            queryset = queryset.filter(teacher=user)
-        # Parents can only see groups their children are in
+            queryset = queryset.filter(section_head=user)
+        # Parents can only see sections their children belong to
+        elif user.role == 'parent':
+            queryset = queryset.filter(students__parents=user).distinct()
+        
+        return queryset
+
+    def get_permissions(self):
+        if self.action in ['list', 'retrieve']:
+            return [permissions.IsAuthenticated()]
+        return [permissions.IsAdminUser()]
+
+
+class GroupViewSet(viewsets.ModelViewSet):
+    """
+    API endpoint for managing groups (classes, clubs, etc.)
+    """
+    queryset = Group.objects.select_related('school', 'section', 'teacher')
+    serializer_class = GroupSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ['group_type', 'is_active', 'school', 'section']
+    search_fields = ['name', 'description', 'school__name', 'section__display_name']
+    ordering_fields = ['name', 'group_type', 'created_at']
+    ordering = ['school__name', 'section__name', 'name']
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        user = self.request.user
+        
+        # Teachers can only see groups in their managed sections
+        if user.role == 'teacher':
+            queryset = queryset.filter(
+                section__in=user.managed_sections.all()
+            )
+        # Parents can only see groups their children belong to
         elif user.role == 'parent':
             queryset = queryset.filter(students__parents=user).distinct()
         
@@ -105,17 +139,34 @@ class GroupViewSet(viewsets.ModelViewSet):
         except Exception as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
+    @action(detail=True, methods=['get'])
+    def statistics(self, request, pk=None):
+        """Get group statistics"""
+        group = self.get_object()
+        
+        total_students = group.students.count()
+        active_students = group.students.filter(is_active=True).count()
+        
+        statistics = {
+            'total_students': total_students,
+            'active_students': active_students,
+            'inactive_students': total_students - active_students,
+            'capacity_utilization': (total_students / group.max_students * 100) if group.max_students else 0
+        }
+        
+        return Response(statistics)
+
 
 class StudentViewSet(viewsets.ModelViewSet):
     """
     API endpoint for managing students
     """
-    queryset = Student.objects.select_related('school').prefetch_related('parents', 'groups')
+    queryset = Student.objects.select_related('school', 'section').prefetch_related('parents', 'groups')
     serializer_class = StudentSerializer
     permission_classes = [permissions.IsAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    filterset_fields = ['gender', 'is_active', 'is_enrolled', 'school']
-    search_fields = ['first_name', 'last_name', 'student_id', 'school__name']
+    filterset_fields = ['gender', 'is_active', 'is_enrolled', 'school', 'section']
+    search_fields = ['first_name', 'last_name', 'student_id', 'school__name', 'section__display_name']
     ordering_fields = ['first_name', 'last_name', 'admission_date', 'created_at']
     ordering = ['first_name', 'last_name']
 
@@ -123,9 +174,12 @@ class StudentViewSet(viewsets.ModelViewSet):
         queryset = super().get_queryset()
         user = self.request.user
         
-        # Teachers can only see students in their assigned groups
+        # Teachers can only see students in their assigned groups within their managed sections
         if user.role == 'teacher':
-            queryset = queryset.filter(groups__teacher=user).distinct()
+            queryset = queryset.filter(
+                groups__teacher=user,
+                section__in=user.managed_sections.all()
+            ).distinct()
         # Parents can only see their own children
         elif user.role == 'parent':
             queryset = queryset.filter(parents=user)
@@ -158,12 +212,12 @@ class ContributionEventViewSet(viewsets.ModelViewSet):
     """
     API endpoint for managing contribution events
     """
-    queryset = ContributionEvent.objects.select_related('school', 'created_by').prefetch_related('groups')
+    queryset = ContributionEvent.objects.select_related('school', 'section', 'created_by').prefetch_related('groups')
     serializer_class = ContributionEventSerializer
     permission_classes = [permissions.IsAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    filterset_fields = ['event_type', 'participation_type', 'is_active', 'is_published', 'school']
-    search_fields = ['name', 'description', 'school__name']
+    filterset_fields = ['event_type', 'participation_type', 'is_active', 'is_published', 'school', 'section']
+    search_fields = ['name', 'description', 'school__name', 'section__display_name']
     ordering_fields = ['name', 'due_date', 'event_date', 'created_at']
     ordering = ['-created_at']
 
@@ -171,12 +225,16 @@ class ContributionEventViewSet(viewsets.ModelViewSet):
         queryset = super().get_queryset()
         user = self.request.user
         
-        # Teachers can only see events for their assigned groups
+        # Teachers can only see events for their managed sections
         if user.role == 'teacher':
-            queryset = queryset.filter(groups__teacher=user).distinct()
-        # Parents can only see events for their children's groups
+            queryset = queryset.filter(
+                section__in=user.managed_sections.all()
+            )
+        # Parents can only see events for their children's sections
         elif user.role == 'parent':
-            queryset = queryset.filter(groups__students__parents=user).distinct()
+            queryset = queryset.filter(
+                groups__students__parents=user
+            ).distinct()
         
         return queryset
 

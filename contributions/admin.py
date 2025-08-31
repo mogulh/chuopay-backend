@@ -1,10 +1,20 @@
 from django.contrib import admin
 from django.db.models import Count
 from .models import (
-    School, Group, Student,
+    School, SchoolSection, Group, Student, StudentGroup, StudentParent,
     ContributionEvent, ContributionTier, StudentContribution, PaymentReminder
 )
 from django.utils import timezone
+
+
+class StudentGroupInline(admin.TabularInline):
+    model = StudentGroup
+    extra = 1
+
+
+class StudentParentInline(admin.TabularInline):
+    model = StudentParent
+    extra = 1
 
 
 @admin.register(School)
@@ -28,24 +38,48 @@ class SchoolAdmin(admin.ModelAdmin):
     readonly_fields = ['created_at', 'updated_at']
 
 
+@admin.register(SchoolSection)
+class SchoolSectionAdmin(admin.ModelAdmin):
+    """
+    Admin for SchoolSection model
+    """
+    list_display = ['display_name', 'school', 'name', 'section_head', 'is_active', 'created_at']
+    list_filter = ['name', 'is_active', 'school', 'created_at']
+    search_fields = ['display_name', 'description', 'school__name']
+    ordering = ['school__name', 'name']
+    
+    fieldsets = (
+        ('Basic Information', {'fields': ('school', 'name', 'display_name', 'description')}),
+        ('Section Settings', {'fields': ('currency', 'timezone')}),
+        ('Management', {'fields': ('is_active', 'section_head')}),
+        ('Timestamps', {'fields': ('created_at', 'updated_at')}),
+    )
+    
+    readonly_fields = ['created_at', 'updated_at']
+
+
 @admin.register(Group)
 class GroupAdmin(admin.ModelAdmin):
     """
     Admin for Group model
     """
-    list_display = ['name', 'school', 'group_type', 'teacher', 'student_count', 'is_active', 'created_at']
-    list_filter = ['group_type', 'is_active', 'school', 'created_at']
-    search_fields = ['name', 'description', 'school__name']
-    ordering = ['school__name', 'name']
+    list_display = ['name', 'section', 'school', 'group_type', 'teacher', 'is_active', 'student_count']
+    list_filter = ['group_type', 'is_active', 'school', 'section', 'created_at']
+    search_fields = ['name', 'description', 'school__name', 'section__display_name']
+    ordering = ['school__name', 'section__name', 'name']
     
     fieldsets = (
         ('Basic Information', {'fields': ('name', 'description', 'group_type')}),
-        ('Relationships', {'fields': ('school', 'teacher')}),
+        ('Relationships', {'fields': ('school', 'section', 'teacher')}),
         ('Settings', {'fields': ('is_active', 'max_students')}),
         ('Timestamps', {'fields': ('created_at', 'updated_at')}),
     )
     
     readonly_fields = ['created_at', 'updated_at', 'student_count']
+    
+    def student_count(self, obj):
+        return obj.students.count()
+    student_count.short_description = 'Students'
 
 
 @admin.register(Student)
@@ -53,23 +87,48 @@ class StudentAdmin(admin.ModelAdmin):
     """
     Admin for Student model
     """
-    list_display = ['full_name', 'student_id', 'school', 'gender', 'age', 'is_active', 'admission_date']
-    list_filter = ['gender', 'is_active', 'school', 'admission_date', 'created_at']
-    search_fields = ['first_name', 'last_name', 'student_id', 'school__name']
-    ordering = ['school__name', 'first_name', 'last_name']
+    list_display = ['full_name', 'student_id', 'section', 'school', 'gender', 'is_active', 'groups_count']
+    list_filter = ['gender', 'is_active', 'is_enrolled', 'school', 'section', 'admission_date']
+    search_fields = ['first_name', 'last_name', 'student_id', 'school__name', 'section__display_name']
+    ordering = ['first_name', 'last_name']
+    inlines = [StudentGroupInline, StudentParentInline]
     
     fieldsets = (
-        ('Basic Information', {'fields': ('first_name', 'last_name', 'date_of_birth', 'gender')}),
-        ('School Information', {'fields': ('school', 'student_id', 'admission_date', 'current_class', 'is_active', 'is_enrolled')}),
+        ('Basic Information', {'fields': ('first_name', 'last_name', 'student_id', 'date_of_birth', 'gender')}),
+        ('School Information', {'fields': ('school', 'section')}),
         ('Contact Information', {'fields': ('phone_number', 'email', 'address')}),
-        ('Relationships', {'fields': ('parents', 'groups')}),
+        ('Academic Information', {'fields': ('admission_date', 'current_class')}),
+        ('Status', {'fields': ('is_active', 'is_enrolled')}),
         ('Timestamps', {'fields': ('created_at', 'updated_at')}),
     )
     
-    readonly_fields = ['created_at', 'updated_at', 'age']
+    readonly_fields = ['created_at', 'updated_at', 'groups_count']
     
-    def get_queryset(self, request):
-        return super().get_queryset(request).select_related('school')
+    def groups_count(self, obj):
+        return obj.studentgroup_set.count()
+    groups_count.short_description = 'Groups'
+
+
+@admin.register(StudentGroup)
+class StudentGroupAdmin(admin.ModelAdmin):
+    """
+    Admin for StudentGroup model
+    """
+    list_display = ['student', 'group', 'academic_year', 'term', 'is_active', 'joined_date']
+    list_filter = ['is_active', 'academic_year', 'term', 'joined_date']
+    search_fields = ['student__first_name', 'student__last_name', 'group__name']
+    ordering = ['student__first_name', 'group__name']
+
+
+@admin.register(StudentParent)
+class StudentParentAdmin(admin.ModelAdmin):
+    """
+    Admin for StudentParent model
+    """
+    list_display = ['student', 'parent', 'relationship', 'is_primary_contact', 'is_emergency_contact']
+    list_filter = ['relationship', 'is_primary_contact', 'is_emergency_contact', 'receives_notifications']
+    search_fields = ['student__first_name', 'student__last_name', 'parent__first_name', 'parent__last_name']
+    ordering = ['student__first_name', 'parent__first_name']
 
 
 @admin.register(ContributionEvent)

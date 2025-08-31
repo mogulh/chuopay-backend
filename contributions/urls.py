@@ -6,6 +6,7 @@ from . import analytics_views
 
 router = DefaultRouter()
 router.register(r'schools', views.SchoolViewSet)
+router.register(r'school-sections', views.SchoolSectionViewSet)
 router.register(r'groups', views.GroupViewSet)
 router.register(r'students', views.StudentViewSet)
 router.register(r'contribution-events', views.ContributionEventViewSet)

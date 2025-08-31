@@ -1,6 +1,6 @@
 from django.core.management.base import BaseCommand
 from django.contrib.auth import get_user_model
-from contributions.models import School, Group, Student, StudentGroup, StudentParent
+from contributions.models import School, SchoolSection, Group, Student, StudentGroup, StudentParent
 from datetime import date
 
 User = get_user_model()
@@ -30,6 +30,33 @@ class Command(BaseCommand):
             self.stdout.write(f'Created school: {school.name}')
         else:
             self.stdout.write(f'School already exists: {school.name}')
+        
+        # Create sections for the school
+        sections = {}
+        section_data = [
+            {
+                'name': 'primary',
+                'display_name': 'Primary School',
+                'description': 'Primary education section (Grades 1-8)'
+            },
+            {
+                'name': 'secondary',
+                'display_name': 'Secondary School',
+                'description': 'Secondary education section (Grades 9-12)'
+            }
+        ]
+        
+        for section_info in section_data:
+            section, created = SchoolSection.objects.get_or_create(
+                school=school,
+                name=section_info['name'],
+                defaults=section_info
+            )
+            sections[section_info['name']] = section
+            if created:
+                self.stdout.write(f'Created section: {section.display_name}')
+            else:
+                self.stdout.write(f'Section already exists: {section.display_name}')
         
         # Create admin user
         admin_user, created = User.objects.get_or_create(
@@ -104,11 +131,12 @@ class Command(BaseCommand):
         else:
             self.stdout.write(f'Parent user already exists: {parent2.full_name}')
         
-        # Create groups
-        class1, created = Group.objects.get_or_create(
+        # Create groups in different sections
+        primary_class1, created = Group.objects.get_or_create(
             name='Class 1A',
-            school=school,
+            section=sections['primary'],
             defaults={
+                'school': school,
                 'description': 'First grade class A',
                 'group_type': 'class',
                 'teacher': teacher_user,
@@ -118,15 +146,16 @@ class Command(BaseCommand):
         )
         
         if created:
-            self.stdout.write(f'Created group: {class1.name}')
+            self.stdout.write(f'Created group: {primary_class1.name}')
         else:
-            self.stdout.write(f'Group already exists: {class1.name}')
+            self.stdout.write(f'Group already exists: {primary_class1.name}')
         
-        class2, created = Group.objects.get_or_create(
-            name='Class 2B',
-            school=school,
+        secondary_class1, created = Group.objects.get_or_create(
+            name='Form 1A',
+            section=sections['secondary'],
             defaults={
-                'description': 'Second grade class B',
+                'school': school,
+                'description': 'First form class A',
                 'group_type': 'class',
                 'teacher': teacher_user,
                 'is_active': True,
@@ -135,11 +164,11 @@ class Command(BaseCommand):
         )
         
         if created:
-            self.stdout.write(f'Created group: {class2.name}')
+            self.stdout.write(f'Created group: {secondary_class1.name}')
         else:
-            self.stdout.write(f'Group already exists: {class2.name}')
+            self.stdout.write(f'Group already exists: {secondary_class1.name}')
         
-        # Create students
+        # Create students in different sections
         students_data = [
             {
                 'first_name': 'Alice',
@@ -148,11 +177,9 @@ class Command(BaseCommand):
                 'date_of_birth': date(2018, 3, 15),
                 'gender': 'female',
                 'school': school,
+                'section': sections['primary'],
                 'admission_date': date(2024, 1, 10),
-                'is_active': True,
-                'emergency_contact_name': 'John Johnson',
-                'emergency_contact_phone': '+254700000005',
-                'emergency_contact_relationship': 'father'
+                'is_active': True
             },
             {
                 'first_name': 'Bob',
@@ -161,37 +188,31 @@ class Command(BaseCommand):
                 'date_of_birth': date(2018, 7, 22),
                 'gender': 'male',
                 'school': school,
+                'section': sections['primary'],
                 'admission_date': date(2024, 1, 10),
-                'is_active': True,
-                'emergency_contact_name': 'Sarah Smith',
-                'emergency_contact_phone': '+254700000006',
-                'emergency_contact_relationship': 'mother'
+                'is_active': True
             },
             {
                 'first_name': 'Charlie',
                 'last_name': 'Brown',
                 'student_id': 'STU003',
-                'date_of_birth': date(2017, 11, 8),
+                'date_of_birth': date(2007, 11, 8),
                 'gender': 'male',
                 'school': school,
+                'section': sections['secondary'],
                 'admission_date': date(2024, 1, 10),
-                'is_active': True,
-                'emergency_contact_name': 'Lucy Brown',
-                'emergency_contact_phone': '+254700000007',
-                'emergency_contact_relationship': 'mother'
+                'is_active': True
             },
             {
                 'first_name': 'Diana',
                 'last_name': 'Wilson',
                 'student_id': 'STU004',
-                'date_of_birth': date(2018, 5, 12),
+                'date_of_birth': date(2008, 5, 12),
                 'gender': 'female',
                 'school': school,
+                'section': sections['secondary'],
                 'admission_date': date(2024, 1, 10),
-                'is_active': True,
-                'emergency_contact_name': 'Mike Wilson',
-                'emergency_contact_phone': '+254700000008',
-                'emergency_contact_relationship': 'father'
+                'is_active': True
             }
         ]
         
@@ -206,13 +227,13 @@ class Command(BaseCommand):
             else:
                 self.stdout.write(f'Student already exists: {student.full_name}')
         
-        # Assign students to groups
+        # Assign students to groups based on their sections
         students = Student.objects.all()
         for i, student in enumerate(students):
-            if i < 2:  # First two students to Class 1A
-                group = class1
-            else:  # Last two students to Class 2B
-                group = class2
+            if student.section.name == 'primary':
+                group = primary_class1
+            else:
+                group = secondary_class1
             
             student_group, created = StudentGroup.objects.get_or_create(
                 student=student,
@@ -231,10 +252,10 @@ class Command(BaseCommand):
         
         # Create parent-student relationships
         parent_student_data = [
-            (parent1, students[0]),  # Mary Parent - Alice Johnson
-            (parent1, students[1]),  # Mary Parent - Bob Smith
-            (parent2, students[2]),  # James Parent - Charlie Brown
-            (parent2, students[3]),  # James Parent - Diana Wilson
+            (parent1, students[0]),  # Mary Parent - Alice Johnson (Primary)
+            (parent1, students[1]),  # Mary Parent - Bob Smith (Primary)
+            (parent2, students[2]),  # James Parent - Charlie Brown (Secondary)
+            (parent2, students[3]),  # James Parent - Diana Wilson (Secondary)
         ]
         
         for parent, student in parent_student_data:
@@ -261,4 +282,7 @@ class Command(BaseCommand):
         self.stdout.write(f'Admin: +254700000000 (password: admin123)')
         self.stdout.write(f'Teacher: +254700000002 (password: teacher123)')
         self.stdout.write(f'Parent 1: +254700000003 (password: parent123)')
-        self.stdout.write(f'Parent 2: +254700000004 (password: parent123)') 
+        self.stdout.write(f'Parent 2: +254700000004 (password: parent123)')
+        self.stdout.write('\nSections Created:')
+        for section in sections.values():
+            self.stdout.write(f'- {section.display_name}') 
